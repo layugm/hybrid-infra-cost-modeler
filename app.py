@@ -51,7 +51,7 @@ PLOTLY_LAYOUT = dict(
     font=dict(family="Inter, sans-serif", size=13),
     margin=dict(l=60, r=30, t=50, b=50),
     legend=dict(orientation="h", yanchor="bottom", y=1.02),
-    hoverlabel=dict(bgcolor="white"),
+    hoverlabel=dict(namelength=-1),
 )
 
 PLOTLY_CONFIG = {
