@@ -1,14 +1,283 @@
-name: Security
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+name: Security Pipeline
 
+on:
+  workflow_call: {}
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch: {}
+
+# --------------------------------------------------------------------------- #
+#  Detect job — inspects repo contents and emits flags for downstream jobs     #
+# --------------------------------------------------------------------------- #
 jobs:
-  security:
-    uses: Visionary-Solutions/devsec-baseline/.github/workflows/security.yaml@main
-    secrets: inherit
+  detect:
+    name: Detect stacks
+    runs-on: ubuntu-latest
+    outputs:
+      has_python:     ${{ steps.detect.outputs.has_python }}
+      has_node:       ${{ steps.detect.outputs.has_node }}
+      has_go:         ${{ steps.detect.outputs.has_go }}
+      has_dockerfile: ${{ steps.detect.outputs.has_dockerfile }}
+      has_iac:        ${{ steps.detect.outputs.has_iac }}
+      sast_rulesets:  ${{ steps.detect.outputs.sast_rulesets }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect stacks and apply overrides
+        id: detect
+        run: |
+          # ── Auto-detection ──────────────────────────────────────────────
+          has_python=false
+          has_node=false
+          has_go=false
+          has_dockerfile=false
+          has_iac=false
+
+          # Python
+          for f in requirements.txt pyproject.toml Pipfile.lock poetry.lock; do
+            if [ -f "$f" ]; then has_python=true; break; fi
+          done
+
+          # Node.js
+          for f in package-lock.json yarn.lock pnpm-lock.yaml; do
+            if [ -f "$f" ]; then has_node=true; break; fi
+          done
+
+          # Go
+          [ -f go.mod ] && has_go=true
+
+          # Dockerfile
+          if compgen -G "Dockerfile*" >/dev/null 2>&1 || \
+             compgen -G "Containerfile*" >/dev/null 2>&1; then
+            has_dockerfile=true
+          fi
+
+          # IaC
+          for d in terraform deploy k8s helm helm-values cluster; do
+            if [ -d "$d" ]; then has_iac=true; break; fi
+          done
+          if compgen -G "*.tf" >/dev/null 2>&1 || [ -f Chart.yaml ]; then
+            has_iac=true
+          fi
+          # Check for Helm values files (common pattern: *values*.yaml)
+          if compgen -G "*values*.yaml" >/dev/null 2>&1; then
+            has_iac=true
+          fi
+
+          # ── Override processing ─────────────────────────────────────────
+          CONFIG=".security-config.yaml"
+          extra_rulesets=""
+
+          if [ -f "$CONFIG" ]; then
+            echo "Found $CONFIG — applying overrides"
+
+            # yq is pre-installed on GitHub runners; fallback to python3
+            if command -v yq &>/dev/null; then
+              YQ="yq"
+            else
+              echo "yq not found, using python3 fallback"
+              YQ="python3 -c \"import sys,yaml; print(yaml.safe_load(open('$CONFIG')).get('overrides',{}).get(sys.argv[1],''))\""
+            fi
+
+            iac_override=$($YQ '.overrides.iac // ""' "$CONFIG" 2>/dev/null || echo "")
+            dockerfile_override=$($YQ '.overrides.dockerfile-linting // ""' "$CONFIG" 2>/dev/null || echo "")
+            sast_override=$($YQ '.overrides.sast // ""' "$CONFIG" 2>/dev/null || echo "")
+
+            [ "$iac_override" = "false" ] && has_iac=false
+            [ "$dockerfile_override" = "false" ] && has_dockerfile=false
+
+            # Extra SAST rulesets
+            extra_rulesets=$($YQ -r '(.overrides.sast.extra_rulesets // []) | join(" ")' "$CONFIG" 2>/dev/null || echo "")
+          fi
+
+          # ── Build SAST rulesets ─────────────────────────────────────────
+          rulesets="p/owasp-top-ten p/security-audit"
+
+          if [ "$has_python" = "true" ]; then
+            rulesets="$rulesets p/python"
+          fi
+          if [ "$has_node" = "true" ]; then
+            rulesets="$rulesets p/javascript p/typescript p/nodejs"
+          fi
+          if [ "$has_go" = "true" ]; then
+            rulesets="$rulesets p/golang"
+          fi
+          if [ -n "$extra_rulesets" ]; then
+            rulesets="$rulesets $extra_rulesets"
+          fi
+
+          # ── Emit outputs ────────────────────────────────────────────────
+          echo "has_python=$has_python"         >> "$GITHUB_OUTPUT"
+          echo "has_node=$has_node"             >> "$GITHUB_OUTPUT"
+          echo "has_go=$has_go"                 >> "$GITHUB_OUTPUT"
+          echo "has_dockerfile=$has_dockerfile" >> "$GITHUB_OUTPUT"
+          echo "has_iac=$has_iac"               >> "$GITHUB_OUTPUT"
+          echo "sast_rulesets=$rulesets"         >> "$GITHUB_OUTPUT"
+
+          # ── Step summary ────────────────────────────────────────────────
+          echo "### Stack Detection Results" >> "$GITHUB_STEP_SUMMARY"
+          echo ""                            >> "$GITHUB_STEP_SUMMARY"
+          echo "| Signal | Detected |"       >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|----------|"       >> "$GITHUB_STEP_SUMMARY"
+          echo "| Python | $has_python |"    >> "$GITHUB_STEP_SUMMARY"
+          echo "| Node.js | $has_node |"     >> "$GITHUB_STEP_SUMMARY"
+          echo "| Go | $has_go |"            >> "$GITHUB_STEP_SUMMARY"
+          echo "| Dockerfile | $has_dockerfile |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| IaC | $has_iac |"          >> "$GITHUB_STEP_SUMMARY"
+          echo ""                            >> "$GITHUB_STEP_SUMMARY"
+          echo "**SAST rulesets:** \`$rulesets\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$CONFIG" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "_Overrides applied from .security-config.yaml_" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # ----------------------------------------------------------------------- #
+  #  SAST — Static Application Security Testing (semgrep)                    #
+  # ----------------------------------------------------------------------- #
+  sast:
+    name: SAST (semgrep)
+    needs: [detect]
+    if: >-
+      needs.detect.outputs.has_python == 'true' ||
+      needs.detect.outputs.has_node == 'true' ||
+      needs.detect.outputs.has_go == 'true'
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install semgrep
+        run: pip install semgrep
+
+      - name: Run SAST scan
+        run: |
+          # Split rulesets into --config flags
+          CONFIGS=""
+          for ruleset in ${{ needs.detect.outputs.sast_rulesets }}; do
+            CONFIGS="$CONFIGS --config $ruleset"
+          done
+          semgrep scan $CONFIGS --sarif --output sast-results.sarif . || true
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: sast-results.sarif
+        continue-on-error: true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sast-results
+          path: sast-results.sarif
+
+  # ----------------------------------------------------------------------- #
+  #  SCA — Software Composition Analysis (trivy)                             #
+  # ----------------------------------------------------------------------- #
+  sca:
+    name: SCA (trivy)
+    needs: [detect]
+    if: >-
+      needs.detect.outputs.has_python == 'true' ||
+      needs.detect.outputs.has_node == 'true' ||
+      needs.detect.outputs.has_go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          skip-dirs: 3rdparty,vendor,node_modules,.venv,build
+          format: json
+          output: sca-results.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sca-results
+          path: sca-results.json
+
+  # ----------------------------------------------------------------------- #
+  #  Secrets Detection (trivy) — always runs                                 #
+  # ----------------------------------------------------------------------- #
+  secrets:
+    name: Secrets Detection (trivy)
+    needs: [detect]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: fs
+          scanners: secret
+          format: json
+          output: secrets-results.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: secrets-results
+          path: secrets-results.json
+
+  # ----------------------------------------------------------------------- #
+  #  IaC Scanning (trivy)                                                    #
+  # ----------------------------------------------------------------------- #
+  iac:
+    name: IaC Scanning (trivy)
+    needs: [detect]
+    if: needs.detect.outputs.has_iac == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aquasecurity/trivy-action@0.35.0
+        with:
+          scan-type: config
+          severity: HIGH,CRITICAL
+          format: json
+          output: iac-results.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iac-results
+          path: iac-results.json
+
+  # ----------------------------------------------------------------------- #
+  #  Dockerfile Linting (hadolint)                                           #
+  # ----------------------------------------------------------------------- #
+  dockerfile:
+    name: Dockerfile Linting (hadolint)
+    needs: [detect]
+    if: needs.detect.outputs.has_dockerfile == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          failure-threshold: warning
+          format: sarif
+          output-file: hadolint.sarif
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: hadolint.sarif
+        continue-on-error: true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dockerfile-results
+          path: hadolint.sarif
