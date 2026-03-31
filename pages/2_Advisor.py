@@ -1,4 +1,4 @@
-"""AI Advisor — Claude-powered infrastructure consultant."""
+"""AI Advisor — LLM-powered infrastructure consultant."""
 
 import streamlit as st
 
@@ -6,30 +6,76 @@ from data import EC2_INSTANCES, GPU_CATALOG, GLOSSARY, calc_fleet_vram
 
 st.set_page_config(page_title="AI Advisor", page_icon=":speech_balloon:", layout="wide")
 
-st.title("AI Advisor")
-st.caption("Ask questions about your infrastructure configuration. Powered by Claude.")
+st.title("AI Advisor", anchor=False)
+st.caption("Ask questions about your infrastructure configuration. Supports Claude, OpenAI, and any OpenAI-compatible API.")
 
 # ---------------------------------------------------------------------------
-# API key input
+# Provider config
 # ---------------------------------------------------------------------------
-if "claude_api_key" not in st.session_state:
-    st.session_state["claude_api_key"] = ""
+PROVIDERS = {
+    "Claude (Anthropic)": {
+        "placeholder": "sk-ant-...",
+        "help": "Get a key at [console.anthropic.com](https://console.anthropic.com)",
+        "default_model": "claude-sonnet-4-6",
+        "models": ["claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-opus-4-6"],
+    },
+    "OpenAI": {
+        "placeholder": "sk-...",
+        "help": "Get a key at [platform.openai.com](https://platform.openai.com/api-keys)",
+        "default_model": "gpt-4o",
+        "models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"],
+    },
+    "OpenAI-Compatible (custom endpoint)": {
+        "placeholder": "your-api-key",
+        "help": "Works with Groq, Together, Fireworks, Ollama, vLLM, or any OpenAI-compatible API",
+        "default_model": "",
+        "models": [],
+    },
+}
+
+provider = st.selectbox("Provider", list(PROVIDERS.keys()),
+                        help="All providers use the same system prompt and conversation format. Your API key stays in this browser session only.")
+prov = PROVIDERS[provider]
+
+# API key
+if "advisor_api_key" not in st.session_state:
+    st.session_state["advisor_api_key"] = ""
 
 api_key = st.text_input(
-    "Claude API Key",
-    type="password",
-    value=st.session_state["claude_api_key"],
-    help="Your key is stored only in this browser session. It is never saved to disk, logged, or sent anywhere except the Anthropic API.",
-    placeholder="sk-ant-...",
+    "API Key", type="password",
+    value=st.session_state["advisor_api_key"],
+    help="Stored only in this browser session. Never saved to disk or logged.",
+    placeholder=prov["placeholder"],
 )
-st.session_state["claude_api_key"] = api_key
+st.session_state["advisor_api_key"] = api_key
 
-if not api_key:
-    st.info(
-        "Enter your Claude API key above to enable the AI advisor. "
-        "You can get one at [console.anthropic.com](https://console.anthropic.com). "
-        "Your key stays in your browser session only — it is never stored or logged."
-    )
+# Model selection
+if provider == "OpenAI-Compatible (custom endpoint)":
+    base_url = st.text_input("API Base URL", placeholder="http://localhost:11434/v1",
+                             help="The OpenAI-compatible endpoint. For Ollama: http://localhost:11434/v1")
+    model = st.text_input("Model name", placeholder="llama3.1:70b",
+                          help="The model ID your endpoint serves.")
+    # Ollama doesn't need a key
+    needs_key = base_url and not base_url.startswith("http://localhost")
+else:
+    base_url = None
+    if prov["models"]:
+        model = st.selectbox("Model", prov["models"],
+                             index=prov["models"].index(prov["default_model"]))
+    else:
+        model = prov["default_model"]
+    needs_key = True
+
+if needs_key and not api_key:
+    st.info(f"Enter your API key above to enable the advisor. {prov['help']}")
+    st.stop()
+
+if provider == "OpenAI-Compatible (custom endpoint)" and not base_url:
+    st.info("Enter your API base URL above.")
+    st.stop()
+
+if not model:
+    st.info("Enter a model name above.")
     st.stop()
 
 # ---------------------------------------------------------------------------
@@ -84,6 +130,38 @@ GUIDELINES:
 - Use plain language — the user may not be deeply technical
 - If asked about something outside infrastructure costs, politely redirect"""
 
+
+# ---------------------------------------------------------------------------
+# API client factory
+# ---------------------------------------------------------------------------
+
+def call_llm(messages: list[dict], system: str) -> str:
+    """Call the selected LLM provider and return the assistant message."""
+    if provider == "Claude (Anthropic)":
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model=model,
+            max_tokens=1024,
+            system=system,
+            messages=messages,
+        )
+        return response.content[0].text
+    else:
+        # OpenAI and OpenAI-compatible use the same SDK
+        import openai
+        client_kwargs = {"api_key": api_key or "ollama"}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client = openai.OpenAI(**client_kwargs)
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=1024,
+            messages=[{"role": "system", "content": system}] + messages,
+        )
+        return response.choices[0].message.content
+
+
 # ---------------------------------------------------------------------------
 # Chat interface
 # ---------------------------------------------------------------------------
@@ -120,39 +198,25 @@ if user_input := st.chat_input("Ask about your infrastructure configuration...")
 # Generate response for the last user message
 if st.session_state["chat_history"] and st.session_state["chat_history"][-1]["role"] == "user":
     try:
-        import anthropic
-    except ImportError:
-        st.error("The `anthropic` package is not installed. Run: `pip install anthropic`")
-        st.stop()
-
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-
         with st.chat_message("assistant"):
-            # Build messages for API (exclude system prompt from messages)
             api_messages = [
                 {"role": m["role"], "content": m["content"]}
                 for m in st.session_state["chat_history"]
             ]
-
             with st.spinner("Thinking..."):
-                response = client.messages.create(
-                    model="claude-sonnet-4-6",
-                    max_tokens=1024,
-                    system=build_system_prompt(),
-                    messages=api_messages,
-                )
-
-            assistant_msg = response.content[0].text
+                assistant_msg = call_llm(api_messages, build_system_prompt())
             st.markdown(assistant_msg)
             st.session_state["chat_history"].append({"role": "assistant", "content": assistant_msg})
-
-    except anthropic.AuthenticationError:
-        st.error("Invalid API key. Check your key at [console.anthropic.com](https://console.anthropic.com).")
-    except anthropic.RateLimitError:
-        st.error("Rate limited. Wait a moment and try again.")
     except Exception as e:
-        st.error(f"Error: {e}")
+        error_str = str(e).lower()
+        if "auth" in error_str or "api key" in error_str or "401" in error_str:
+            st.error(f"Authentication failed. Check your API key. {prov['help']}")
+        elif "rate" in error_str or "429" in error_str:
+            st.error("Rate limited. Wait a moment and try again.")
+        elif "connection" in error_str or "connect" in error_str:
+            st.error(f"Could not connect to the API. Check your endpoint URL and network.")
+        else:
+            st.error(f"Error: {e}")
 
 # Clear chat button
 if st.session_state["chat_history"]:
