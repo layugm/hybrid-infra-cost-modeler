@@ -62,6 +62,27 @@ requirements.txt    # Python dependencies
 
 The hybrid scenario models owning on-prem hardware for privacy-sensitive workloads while renting cloud compute for burst capacity.
 
+## Deploy to Streamlit Community Cloud
+
+1. Go to [share.streamlit.io](https://share.streamlit.io) and sign in with GitHub
+2. Click **"Create app"**
+3. Fill in:
+   - **Repository**: `layugm/hybrid-infra-cost-modeler`
+   - **Branch**: `main`
+   - **Main file path**: `app.py`
+4. Pick a subdomain and click **Deploy**
+
+The app auto-redeploys on every push to `main`.
+
+To enable live AWS pricing on the deployed app, add your credentials via **Settings > Secrets** in the Streamlit Cloud dashboard:
+
+```toml
+[aws]
+AWS_ACCESS_KEY_ID = "..."
+AWS_SECRET_ACCESS_KEY = "..."
+AWS_DEFAULT_REGION = "us-east-1"
+```
+
 ## Adding GPUs or Instances
 
 Edit the catalogs in `data.py`:
