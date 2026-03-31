@@ -57,34 +57,64 @@ ONPREM_DEFAULTS = {
 EC2_INSTANCES = {
     # G5 — NVIDIA A10G (Ampere)
     "g5.xlarge": {"gpu_model": "A10G", "gpu_count": 1, "vram_gb": 24, "vcpus": 4, "ram_gb": 16,
-                  "on_demand_hr": 1.006, "spot_hr": 0.434, "reserved_1yr_hr": 0.634},
+                  "on_demand_hr": 1.006, "spot_hr": 0.434, "reserved_1yr_hr": 0.634,
+                  "use_case": "Light inference, dev/test", "desc": "Entry-level GPU instance. Good for single-model inference or prototyping."},
     "g5.12xlarge": {"gpu_model": "A10G", "gpu_count": 4, "vram_gb": 96, "vcpus": 48, "ram_gb": 192,
-                    "on_demand_hr": 5.672, "spot_hr": 2.489, "reserved_1yr_hr": 3.573},
+                    "on_demand_hr": 5.672, "spot_hr": 2.489, "reserved_1yr_hr": 3.573,
+                    "use_case": "Multi-model inference", "desc": "4 GPUs for running multiple models in parallel or larger single models."},
     "g5.48xlarge": {"gpu_model": "A10G", "gpu_count": 8, "vram_gb": 192, "vcpus": 192, "ram_gb": 768,
-                    "on_demand_hr": 16.288, "spot_hr": 7.402, "reserved_1yr_hr": 10.261},
+                    "on_demand_hr": 16.288, "spot_hr": 7.402, "reserved_1yr_hr": 10.261,
+                    "use_case": "High-throughput inference", "desc": "Full 8-GPU config for production inference at scale."},
     # G6 — NVIDIA L4 (Ada Lovelace)
     "g6.xlarge": {"gpu_model": "L4", "gpu_count": 1, "vram_gb": 24, "vcpus": 4, "ram_gb": 16,
-                  "on_demand_hr": 0.805, "spot_hr": 0.345, "reserved_1yr_hr": 0.524},
+                  "on_demand_hr": 0.805, "spot_hr": 0.345, "reserved_1yr_hr": 0.524,
+                  "use_case": "Cost-efficient inference", "desc": "Cheapest GPU option. Good for small models and light workloads."},
     "g6.12xlarge": {"gpu_model": "L4", "gpu_count": 4, "vram_gb": 96, "vcpus": 48, "ram_gb": 192,
-                    "on_demand_hr": 4.602, "spot_hr": 2.153, "reserved_1yr_hr": 2.996},
+                    "on_demand_hr": 4.602, "spot_hr": 2.153, "reserved_1yr_hr": 2.996,
+                    "use_case": "Balanced inference", "desc": "4 efficient GPUs. Best price/performance for medium inference workloads."},
     "g6.48xlarge": {"gpu_model": "L4", "gpu_count": 8, "vram_gb": 192, "vcpus": 192, "ram_gb": 768,
-                    "on_demand_hr": 13.35, "spot_hr": 6.388, "reserved_1yr_hr": 8.691},
+                    "on_demand_hr": 13.35, "spot_hr": 6.388, "reserved_1yr_hr": 8.691,
+                    "use_case": "Scale inference", "desc": "8 L4 GPUs for high-volume inference. Cost-effective at scale."},
     # G6e — NVIDIA L40S (Ada Lovelace)
     "g6e.xlarge": {"gpu_model": "L40S", "gpu_count": 1, "vram_gb": 48, "vcpus": 4, "ram_gb": 32,
-                   "on_demand_hr": 1.862, "spot_hr": 0.795, "reserved_1yr_hr": 1.174},
+                   "on_demand_hr": 1.862, "spot_hr": 0.795, "reserved_1yr_hr": 1.174,
+                   "use_case": "Single-GPU fine-tuning", "desc": "48GB VRAM handles most open-source models. Good for fine-tuning smaller models."},
     "g6e.12xlarge": {"gpu_model": "L40S", "gpu_count": 4, "vram_gb": 192, "vcpus": 48, "ram_gb": 384,
-                     "on_demand_hr": 10.493, "spot_hr": 4.471, "reserved_1yr_hr": 6.611},
+                     "on_demand_hr": 10.493, "spot_hr": 4.471, "reserved_1yr_hr": 6.611,
+                     "use_case": "Fine-tuning & inference", "desc": "4x L40S is the sweet spot for mid-range training and production inference."},
     "g6e.48xlarge": {"gpu_model": "L40S", "gpu_count": 8, "vram_gb": 384, "vcpus": 192, "ram_gb": 1536,
-                     "on_demand_hr": 30.13, "spot_hr": 9.82, "reserved_1yr_hr": 18.98},
+                     "on_demand_hr": 30.13, "spot_hr": 9.82, "reserved_1yr_hr": 18.98,
+                     "use_case": "Large model training", "desc": "8x L40S for training large models or running high-throughput inference."},
     # P4d — NVIDIA A100 40GB (Ampere)
     "p4d.24xlarge": {"gpu_model": "A100 40GB", "gpu_count": 8, "vram_gb": 320, "vcpus": 96, "ram_gb": 1152,
-                     "on_demand_hr": 21.96, "spot_hr": 10.10, "reserved_1yr_hr": 13.92},
+                     "on_demand_hr": 21.96, "spot_hr": 10.10, "reserved_1yr_hr": 13.92,
+                     "use_case": "Heavy training", "desc": "8x A100 40GB — the industry workhorse for large-scale model training. 400Gbps networking."},
     # P4de — NVIDIA A100 80GB (Ampere)
     "p4de.24xlarge": {"gpu_model": "A100 80GB", "gpu_count": 8, "vram_gb": 640, "vcpus": 96, "ram_gb": 1152,
-                      "on_demand_hr": 27.45, "spot_hr": 17.46, "reserved_1yr_hr": 17.40},
+                      "on_demand_hr": 27.45, "spot_hr": 17.46, "reserved_1yr_hr": 17.40,
+                      "use_case": "Large model training", "desc": "8x A100 80GB — double the memory of p4d. For models that don't fit in 40GB per GPU."},
     # P5 — NVIDIA H100 (Hopper)
     "p5.48xlarge": {"gpu_model": "H100", "gpu_count": 8, "vram_gb": 640, "vcpus": 192, "ram_gb": 2048,
-                    "on_demand_hr": 55.04, "spot_hr": 30.455, "reserved_1yr_hr": 23.777},
+                    "on_demand_hr": 55.04, "spot_hr": 30.455, "reserved_1yr_hr": 23.777,
+                    "use_case": "Frontier model training", "desc": "8x H100 — fastest available. For training the largest models. 3200Gbps networking."},
+}
+
+# Plain-English descriptions for AWS concepts shown in the UI
+GLOSSARY = {
+    "on_demand": "Pay by the hour, no commitment. Most expensive but fully flexible — start/stop anytime.",
+    "spot": "Up to 90% cheaper than on-demand. AWS can reclaim these instances with 2 min notice. Best for fault-tolerant or batch workloads.",
+    "reserved_1yr": "Commit to 1 year for ~35-40% savings vs on-demand. You pay whether you use it or not.",
+    "eks": "Amazon's managed Kubernetes service. Handles the control plane (scheduling, scaling) so you don't have to run it yourself.",
+    "eks_hybrid": "Run your own on-prem servers as part of an EKS cluster. AWS manages orchestration; you own the hardware.",
+    "eks_anywhere": "Run EKS entirely on your own hardware with no cloud dependency. Flat subscription fee.",
+    "nitro_enclave": "Isolated compute environment for sensitive data. Runs inside your instance with no network access — but does NOT support GPUs.",
+    "dedicated_instance": "Your instance runs on hardware not shared with other AWS customers. ~10% more expensive.",
+    "dedicated_host": "You rent an entire physical server. Full control over placement. Fixed hourly rate regardless of how many instances you run on it.",
+    "vram": "Video RAM — memory on the GPU. Determines the maximum size of AI models you can load. More VRAM = larger models.",
+    "vcpu": "Virtual CPU — a share of a physical processor core. More vCPUs = more parallel processing for non-GPU tasks.",
+    "capex": "Capital Expenditure — upfront purchase cost for hardware you own.",
+    "opex": "Operating Expenditure — ongoing monthly costs (cloud bills, electricity, rack space).",
+    "breakeven": "The month where cumulative cloud spending exceeds what you would have spent buying hardware. After this point, owning is cheaper.",
 }
 
 PRICING_TIERS = {

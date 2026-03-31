@@ -23,6 +23,7 @@ from data import (
     build_tco_table,
     estimate_system_power,
     fetch_all_live_prices,
+    GLOSSARY,
 )
 
 # ---------------------------------------------------------------------------
@@ -156,13 +157,19 @@ with st.sidebar.expander("Cloud Fleet (AWS EC2)", expanded=True):
         )
         inst = EC2_INSTANCES[entry["instance_type"]]
         st.caption(f"{inst['vcpus']} vCPUs · {inst['ram_gb']} GiB RAM · {inst['vram_gb']} GB VRAM")
+        st.caption(f"_{inst.get('use_case', '')}_  —  {inst.get('desc', '')}")
 
         c1, c2 = st.columns(2)
         entry["count"] = c1.number_input("Count", 1, 20, entry["count"], key=f"fleet_count_{eid}")
+
+        # Map pricing tier to glossary key for help text
+        _tier_help = {"On-Demand": GLOSSARY["on_demand"], "Spot": GLOSSARY["spot"],
+                      "1-Year Reserved": GLOSSARY["reserved_1yr"]}
         entry["pricing_tier"] = c2.selectbox(
             "Pricing", list(PRICING_TIERS.keys()),
             index=list(PRICING_TIERS.keys()).index(entry["pricing_tier"]),
             key=f"fleet_tier_{eid}",
+            help=_tier_help.get(entry["pricing_tier"], ""),
         )
 
         entry["usage_pattern"] = st.selectbox(
@@ -195,12 +202,13 @@ with st.sidebar.expander("Cloud Fleet (AWS EC2)", expanded=True):
 # Sidebar — EKS Management
 # ---------------------------------------------------------------------------
 with st.sidebar.expander("EKS Management (optional)", expanded=False):
-    enable_eks = st.checkbox("Add EKS costs")
+    enable_eks = st.checkbox("Add EKS costs", help=GLOSSARY["eks"])
     eks_monthly = 0.0
     if enable_eks:
         eks_clusters = st.number_input("Cluster count", 1, 10, 1)
         eks_extended = st.checkbox("Extended support ($0.60/hr)")
-        eks_mode = st.radio("Mode", ["Standard (control plane only)", "Hybrid Nodes", "EKS Anywhere"])
+        eks_mode = st.radio("Mode", ["Standard (control plane only)", "Hybrid Nodes", "EKS Anywhere"],
+                           help=f"**Standard**: {GLOSSARY['eks']}\n\n**Hybrid Nodes**: {GLOSSARY['eks_hybrid']}\n\n**EKS Anywhere**: {GLOSSARY['eks_anywhere']}")
 
         eks_hybrid_vcpus = 0
         eks_anywhere = False
@@ -233,6 +241,7 @@ with st.sidebar.expander("Secure Workspaces (optional)", expanded=False):
     workspace_mode = st.radio(
         "Tenancy",
         ["Shared (default)", "Nitro Enclaves", "Dedicated Instances", "Dedicated Hosts"],
+        help=f"**Shared**: Standard multi-tenant cloud. Your instance runs on shared hardware.\n\n**Nitro Enclaves**: {GLOSSARY['nitro_enclave']}\n\n**Dedicated Instances**: {GLOSSARY['dedicated_instance']}\n\n**Dedicated Hosts**: {GLOSSARY['dedicated_host']}",
     )
 
     workspace_key = "shared"
@@ -315,16 +324,16 @@ st.caption("Compare on-prem GPU servers against AWS EC2 fleets — interactive C
 # Section A: Summary metrics
 # ---------------------------------------------------------------------------
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("On-Prem CapEx", f"${capex:,.0f}")
-c2.metric("On-Prem Monthly OpEx", f"${onprem_monthly:,.0f}")
+c1.metric("On-Prem CapEx", f"${capex:,.0f}", help=GLOSSARY["capex"])
+c2.metric("On-Prem Monthly OpEx", f"${onprem_monthly:,.0f}", help=GLOSSARY["opex"])
 cloud_label = "Cloud Fleet Monthly"
 if eks_monthly > 0:
     cloud_label = "Cloud Fleet + EKS Monthly"
-c3.metric(cloud_label, f"${cloud_monthly:,.0f}")
+c3.metric(cloud_label, f"${cloud_monthly:,.0f}", help=GLOSSARY["opex"])
 if breakeven is not None:
-    c4.metric("Break-Even", f"{breakeven:.1f} months")
+    c4.metric("Break-Even", f"{breakeven:.1f} months", help=GLOSSARY["breakeven"])
 else:
-    c4.metric("Break-Even", "Never (cloud cheaper)")
+    c4.metric("Break-Even", "Never (cloud cheaper)", help=GLOSSARY["breakeven"])
 
 # Config summary
 with st.expander("Current configuration summary"):
