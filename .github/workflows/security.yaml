@@ -1,0 +1,14 @@
+name: Security
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  security:
+    uses: Visionary-Solutions/devsec-baseline/.github/workflows/security.yaml@main
+    secrets: inherit
+    permissions:
+      contents: read
+      security-events: write
