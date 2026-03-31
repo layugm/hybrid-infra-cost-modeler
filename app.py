@@ -397,7 +397,7 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Section B: Break-even timeline
 # ---------------------------------------------------------------------------
-st.subheader("Cumulative Cost Over Time")
+st.subheader("Cumulative Cost Over Time", anchor=False)
 
 timeline = build_timeline_df(capex, onprem_monthly, cloud_monthly, horizon_months, hybrid_monthly)
 
@@ -435,7 +435,7 @@ st.plotly_chart(fig_timeline, use_container_width=True, config=PLOTLY_CONFIG)
 # ---------------------------------------------------------------------------
 # Section C: Monthly cost breakdown
 # ---------------------------------------------------------------------------
-st.subheader("Monthly Cost Breakdown")
+st.subheader("Monthly Cost Breakdown", anchor=False)
 
 amort_months = max(horizon_months, 1)
 onprem_amortized = capex / amort_months
@@ -467,7 +467,7 @@ st.plotly_chart(fig_monthly, use_container_width=True, config=PLOTLY_CONFIG)
 # ---------------------------------------------------------------------------
 # Section D: VRAM comparison
 # ---------------------------------------------------------------------------
-st.subheader("VRAM Comparison")
+st.subheader("VRAM Comparison", anchor=False)
 
 # Fleet instances in use
 fleet_types = {e["instance_type"] for e in st.session_state["fleet"]}
@@ -502,7 +502,7 @@ st.plotly_chart(fig_vram, use_container_width=True, config=PLOTLY_CONFIG)
 # ---------------------------------------------------------------------------
 # Section E: TCO table + chart
 # ---------------------------------------------------------------------------
-st.subheader("Total Cost of Ownership")
+st.subheader("Total Cost of Ownership", anchor=False)
 
 tco = build_tco_table(capex, onprem_monthly, cloud_monthly, hybrid_monthly)
 tco_display = tco.copy()
@@ -529,7 +529,7 @@ st.plotly_chart(fig_tco, use_container_width=True, config=PLOTLY_CONFIG)
 # ---------------------------------------------------------------------------
 # Section F: Export
 # ---------------------------------------------------------------------------
-st.subheader("Export")
+st.subheader("Export", anchor=False)
 
 csv = timeline.to_csv(index=False)
 st.download_button(label="Download timeline data (CSV)", data=csv,

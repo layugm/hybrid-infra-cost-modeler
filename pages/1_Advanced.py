@@ -53,7 +53,7 @@ st.caption("Deeper analysis tools — utilization modeling, scenario comparison,
 # ---------------------------------------------------------------------------
 # Section 1: Utilization Modeling
 # ---------------------------------------------------------------------------
-st.header("Utilization Modeling")
+st.header("Utilization Modeling", anchor=False)
 st.caption(
     "On-prem GPUs aren't always 100% busy. Lower utilization means you're paying "
     "for idle capacity, increasing your effective cost per unit of work."
@@ -115,7 +115,7 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Section 2: Scenario Snapshots
 # ---------------------------------------------------------------------------
-st.header("Scenario Comparison")
+st.header("Scenario Comparison", anchor=False)
 st.caption("Save different configurations and compare them side-by-side.")
 
 if "scenarios" not in st.session_state:
@@ -208,7 +208,7 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Section 3: Executive Summary
 # ---------------------------------------------------------------------------
-st.header("Executive Summary")
+st.header("Executive Summary", anchor=False)
 st.caption("Auto-generated text ready to copy into emails or presentations.")
 
 summary = generate_summary(
@@ -225,11 +225,13 @@ summary = generate_summary(
     dx_monthly=c["dx_monthly"],
 )
 
-st.markdown(f"> {summary}")
+plain_summary = summary.replace("**", "")
+
+st.container(border=True).markdown(plain_summary)
 
 st.download_button(
-    "Copy summary as text",
-    data=summary.replace("**", ""),
+    "Download as text",
+    data=plain_summary,
     file_name="executive_summary.txt",
     mime="text/plain",
 )
