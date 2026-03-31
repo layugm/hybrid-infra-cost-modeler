@@ -1,5 +1,7 @@
 """Cost model for hybrid on-prem vs cloud GPU infrastructure comparison."""
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime, timezone
 
