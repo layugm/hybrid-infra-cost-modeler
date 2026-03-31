@@ -22,7 +22,7 @@ Interactive Streamlit dashboard for comparing on-prem GPU server costs (CapEx) a
 git clone https://github.com/layugm/hybrid-infra-cost-modeler.git
 cd hybrid-infra-cost-modeler
 pip install -r requirements.txt
-streamlit run Modeler.py
+streamlit run modeler.py
 ```
 
 Opens at `http://localhost:8501`.
@@ -43,7 +43,7 @@ Falls back to static pricing (March 2026 snapshot) if credentials aren't configu
 ## Project Structure
 
 ```
-Modeler.py          # Main dashboard — UI, charts, sidebar controls
+modeler.py          # Main dashboard — UI, charts, sidebar controls
 data.py             # GPU/chassis/EC2 catalogs, cost functions, AWS pricing API
 requirements.txt    # Python dependencies
 ```
@@ -69,7 +69,7 @@ The hybrid scenario models owning on-prem hardware for privacy-sensitive workloa
 3. Fill in:
    - **Repository**: `layugm/hybrid-infra-cost-modeler`
    - **Branch**: `main`
-   - **Main file path**: `Modeler.py`
+   - **Main file path**: `modeler.py`
 4. Pick a subdomain and click **Deploy**
 
 The app auto-redeploys on every push to `main`.
