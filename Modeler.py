@@ -88,7 +88,7 @@ if "fleet_counter" not in st.session_state:
 # ---------------------------------------------------------------------------
 st.sidebar.title("Configuration")
 
-with st.sidebar.expander("On-Prem Hardware", expanded=True):
+with st.sidebar.expander("On-Prem Hardware", expanded=False):
     chassis_name = st.selectbox("Server Chassis", list(CHASSIS_CATALOG.keys()))
     chassis_info = CHASSIS_CATALOG[chassis_name]
     chassis_cost = st.number_input(
@@ -124,7 +124,7 @@ with st.sidebar.expander("On-Prem Hardware", expanded=True):
 # ---------------------------------------------------------------------------
 # Sidebar — Cloud Fleet
 # ---------------------------------------------------------------------------
-with st.sidebar.expander("Cloud Fleet (AWS EC2)", expanded=True):
+with st.sidebar.expander("Cloud Fleet (AWS EC2)", expanded=False):
     aws_region = st.selectbox("AWS Region", list(AWS_REGIONS.keys()),
                               format_func=lambda r: f"{r} — {AWS_REGIONS[r]}")
 
