@@ -1,4 +1,4 @@
-"""Hybrid Infrastructure Cost Modeler — On-Prem vs Cloud GPU Comparison."""
+"""Hybrid Infrastructure Cost Modeler — On-Prem vs Cloud GPU Fleet Comparison."""
 
 import streamlit as st
 import plotly.graph_objects as go
@@ -15,6 +15,10 @@ from data import (
     calc_onprem_monthly_opex,
     calc_cloud_monthly,
     calc_breakeven_months,
+    calc_fleet_monthly,
+    calc_fleet_vram,
+    calc_eks_total_monthly,
+    apply_secure_workspace,
     build_timeline_df,
     build_tco_table,
     estimate_system_power,
@@ -58,13 +62,30 @@ PLOTLY_CONFIG = {
     "displayModeBar": True,
 }
 
+
+def format_instance(name):
+    inst = EC2_INSTANCES[name]
+    return f"{name} — {inst['gpu_count']}x {inst['gpu_model']} ({inst['vram_gb']}GB)"
+
+
+# ---------------------------------------------------------------------------
+# Initialize fleet in session state
+# ---------------------------------------------------------------------------
+if "fleet" not in st.session_state:
+    st.session_state["fleet"] = [
+        {"id": 0, "instance_type": "g6e.12xlarge", "count": 1,
+         "pricing_tier": "Spot", "usage_pattern": "24/7", "custom_hours": 12.0}
+    ]
+if "fleet_counter" not in st.session_state:
+    st.session_state["fleet_counter"] = 1
+
+
 # ---------------------------------------------------------------------------
 # Sidebar — On-Prem
 # ---------------------------------------------------------------------------
 st.sidebar.title("Configuration")
 
 with st.sidebar.expander("On-Prem Hardware", expanded=True):
-    # Chassis
     chassis_name = st.selectbox("Server Chassis", list(CHASSIS_CATALOG.keys()))
     chassis_info = CHASSIS_CATALOG[chassis_name]
     chassis_cost = st.number_input(
@@ -74,11 +95,10 @@ with st.sidebar.expander("On-Prem Hardware", expanded=True):
         value=chassis_info["price_default"],
         step=500,
     )
-
-    # GPU
     gpu_model = st.selectbox("GPU Model", list(GPU_CATALOG.keys()))
     gpu_info = GPU_CATALOG[gpu_model]
-    gpu_count = st.slider("GPU Count", 1, chassis_info["max_gpus"], min(ONPREM_DEFAULTS["gpu_count"], chassis_info["max_gpus"]))
+    gpu_count = st.slider("GPU Count", 1, chassis_info["max_gpus"],
+                          min(ONPREM_DEFAULTS["gpu_count"], chassis_info["max_gpus"]))
     gpu_unit_cost = st.number_input(
         "GPU Unit Cost ($)",
         min_value=gpu_info["price_low"],
@@ -86,38 +106,27 @@ with st.sidebar.expander("On-Prem Hardware", expanded=True):
         value=gpu_info["price_default"],
         step=100,
     )
-
-    # Other hardware
     ram_cost = st.number_input("RAM Cost ($)", value=ONPREM_DEFAULTS["ram_cost"], step=100)
     storage_cost = st.number_input("Storage/PSU/Rails ($)", value=ONPREM_DEFAULTS["storage_cost"], step=100)
 
-    # Power
     estimated_power = estimate_system_power(gpu_count, gpu_info["tdp_w"])
     power_kw = st.number_input(
-        "System Power (kW)",
-        value=round(estimated_power, 1),
-        step=0.1,
-        help=f"Auto-estimated from {gpu_count}x {gpu_info['tdp_w']}W GPUs + 500W base. Override if you know your actual draw.",
+        "System Power (kW)", value=round(estimated_power, 1), step=0.1,
+        help=f"Auto-estimated from {gpu_count}x {gpu_info['tdp_w']}W GPUs + 500W base.",
     )
-    electricity = st.number_input(
-        "Electricity ($/kWh)",
-        value=ONPREM_DEFAULTS["electricity_kwh"],
-        step=0.01,
-        format="%.2f",
-    )
+    electricity = st.number_input("Electricity ($/kWh)", value=ONPREM_DEFAULTS["electricity_kwh"],
+                                  step=0.01, format="%.2f")
     rack_monthly = st.number_input("Monthly Rack Cost ($)", value=ONPREM_DEFAULTS["rack_monthly"], step=50)
 
 # ---------------------------------------------------------------------------
-# Sidebar — Cloud
+# Sidebar — Cloud Fleet
 # ---------------------------------------------------------------------------
-with st.sidebar.expander("Cloud (AWS EC2)", expanded=True):
+with st.sidebar.expander("Cloud Fleet (AWS EC2)", expanded=True):
     aws_region = st.selectbox("AWS Region", list(AWS_REGIONS.keys()),
                               format_func=lambda r: f"{r} — {AWS_REGIONS[r]}")
 
-    # Live pricing toggle
     use_live = st.toggle("Live AWS pricing", value=False,
-                         help="Fetch real-time spot and on-demand prices via boto3. Requires AWS credentials configured.")
-
+                         help="Fetch real-time spot/on-demand prices via boto3.")
     live_prices = None
     if use_live:
         cache_key = f"live_prices_{aws_region}"
@@ -125,7 +134,6 @@ with st.sidebar.expander("Cloud (AWS EC2)", expanded=True):
             with st.spinner("Fetching live AWS prices..."):
                 st.session_state[cache_key] = fetch_all_live_prices(aws_region)
         live_prices = st.session_state[cache_key]
-
         fetched_at = live_prices.get("fetched_at", "")
         if fetched_at:
             st.caption(f"Fetched: {fetched_at[:19]}Z")
@@ -134,72 +142,174 @@ with st.sidebar.expander("Cloud (AWS EC2)", expanded=True):
                 st.session_state[cache_key] = fetch_all_live_prices(aws_region)
                 st.rerun()
 
-    # Instance selection with summary
-    def format_instance(name):
-        inst = EC2_INSTANCES[name]
-        return f"{name} — {inst['gpu_count']}x {inst['gpu_model']} ({inst['vram_gb']}GB)"
+    st.markdown("---")
 
-    instance_name = st.selectbox("Instance Type", list(EC2_INSTANCES.keys()), format_func=format_instance)
-    instance = EC2_INSTANCES[instance_name]
+    # Fleet entries
+    for i, entry in enumerate(st.session_state["fleet"]):
+        eid = entry["id"]
+        st.markdown(f"**Instance {i + 1}**")
 
-    # Show instance specs
-    st.caption(f"{instance['vcpus']} vCPUs · {instance['ram_gb']} GiB RAM · {instance['vram_gb']} GB VRAM")
+        entry["instance_type"] = st.selectbox(
+            "Type", list(EC2_INSTANCES.keys()), format_func=format_instance,
+            index=list(EC2_INSTANCES.keys()).index(entry["instance_type"]),
+            key=f"fleet_type_{eid}",
+        )
+        inst = EC2_INSTANCES[entry["instance_type"]]
+        st.caption(f"{inst['vcpus']} vCPUs · {inst['ram_gb']} GiB RAM · {inst['vram_gb']} GB VRAM")
 
-    pricing_tier = st.radio("Pricing Tier", list(PRICING_TIERS.keys()))
+        c1, c2 = st.columns(2)
+        entry["count"] = c1.number_input("Count", 1, 20, entry["count"], key=f"fleet_count_{eid}")
+        entry["pricing_tier"] = c2.selectbox(
+            "Pricing", list(PRICING_TIERS.keys()),
+            index=list(PRICING_TIERS.keys()).index(entry["pricing_tier"]),
+            key=f"fleet_tier_{eid}",
+        )
 
-    # Determine hourly rate
-    static_rate = instance[PRICING_TIERS[pricing_tier]]
-    hourly_rate = static_rate
+        entry["usage_pattern"] = st.selectbox(
+            "Usage", ["24/7", "Business hours (10h weekdays)", "Custom"],
+            index=["24/7", "Business hours (10h weekdays)", "Custom"].index(entry["usage_pattern"]),
+            key=f"fleet_usage_{eid}",
+        )
+        if entry["usage_pattern"] == "Custom":
+            entry["custom_hours"] = st.slider("Hours/day", 1.0, 24.0, entry.get("custom_hours", 12.0),
+                                              0.5, key=f"fleet_hours_{eid}")
 
-    if live_prices:
-        live_spot = live_prices["spot"].get(instance_name)
-        live_od = live_prices["on_demand"].get(instance_name)
+        if len(st.session_state["fleet"]) > 1:
+            if st.button("Remove", key=f"fleet_remove_{eid}"):
+                st.session_state["fleet"] = [e for e in st.session_state["fleet"] if e["id"] != eid]
+                st.rerun()
 
-        if pricing_tier == "Spot" and live_spot is not None:
-            hourly_rate = live_spot
-            delta = live_spot - instance["spot_hr"]
-            st.metric("Live Spot Rate", f"${live_spot:.4f}/hr",
-                      delta=f"${delta:+.4f} vs static", delta_color="inverse")
-        elif pricing_tier == "On-Demand" and live_od is not None:
-            hourly_rate = live_od
-            delta = live_od - instance["on_demand_hr"]
-            st.metric("Live On-Demand Rate", f"${live_od:.4f}/hr",
-                      delta=f"${delta:+.4f} vs static", delta_color="inverse")
-        elif pricing_tier == "1-Year Reserved":
-            st.caption("Reserved pricing not available via API — using static rate.")
-    else:
-        st.caption(f"Rate: ${static_rate:.2f}/hr (static)")
+        if i < len(st.session_state["fleet"]) - 1:
+            st.markdown("---")
 
-    usage_pattern = st.selectbox("Usage Pattern", ["24/7", "Business hours (10h weekdays)", "Custom"])
-    if usage_pattern == "24/7":
-        hours_per_day = 24.0
-    elif usage_pattern.startswith("Business"):
-        hours_per_day = 10.0 * (5.0 / 7.0)
-    else:
-        hours_per_day = st.slider("Hours per day", 1.0, 24.0, 12.0, 0.5)
+    if st.button("+ Add instance type"):
+        new_id = st.session_state["fleet_counter"]
+        st.session_state["fleet_counter"] = new_id + 1
+        st.session_state["fleet"].append(
+            {"id": new_id, "instance_type": "g6e.xlarge", "count": 1,
+             "pricing_tier": "On-Demand", "usage_pattern": "24/7", "custom_hours": 12.0}
+        )
+        st.rerun()
 
 # ---------------------------------------------------------------------------
-# Sidebar — Analysis
+# Sidebar — EKS Management
+# ---------------------------------------------------------------------------
+with st.sidebar.expander("EKS Management (optional)", expanded=False):
+    enable_eks = st.checkbox("Add EKS costs")
+    eks_monthly = 0.0
+    if enable_eks:
+        eks_clusters = st.number_input("Cluster count", 1, 10, 1)
+        eks_extended = st.checkbox("Extended support ($0.60/hr)")
+        eks_mode = st.radio("Mode", ["Standard (control plane only)", "Hybrid Nodes", "EKS Anywhere"])
+
+        eks_hybrid_vcpus = 0
+        eks_anywhere = False
+        eks_anywhere_term = 1
+
+        if eks_mode == "Hybrid Nodes":
+            eks_hybrid_vcpus = st.number_input(
+                "On-prem vCPUs registered", 1, 10000, 96,
+                help="vCPUs on your on-prem workers managed by EKS. Priced at $0.020/vCPU/hr (tiered).",
+            )
+        elif eks_mode == "EKS Anywhere":
+            eks_anywhere = True
+            eks_anywhere_term = 3 if st.radio(
+                "Term", ["1 Year ($2,000/mo)", "3 Year ($1,500/mo)"]
+            ).startswith("3") else 1
+
+        eks_monthly = calc_eks_total_monthly(
+            cluster_count=eks_clusters,
+            extended_support=eks_extended,
+            hybrid_vcpus=eks_hybrid_vcpus,
+            anywhere=eks_anywhere,
+            anywhere_term=eks_anywhere_term,
+        )
+        st.metric("EKS Monthly", f"${eks_monthly:,.0f}")
+
+# ---------------------------------------------------------------------------
+# Sidebar — Secure Workspaces
+# ---------------------------------------------------------------------------
+with st.sidebar.expander("Secure Workspaces (optional)", expanded=False):
+    workspace_mode = st.radio(
+        "Tenancy",
+        ["Shared (default)", "Nitro Enclaves", "Dedicated Instances", "Dedicated Hosts"],
+    )
+
+    workspace_key = "shared"
+    dedicated_host_rate = 0.0
+
+    if workspace_mode == "Nitro Enclaves":
+        workspace_key = "nitro_enclave"
+        st.info("No additional cost. Nitro Enclaves do **not** support GPU passthrough — CPU/memory isolation only.")
+    elif workspace_mode == "Dedicated Instances":
+        workspace_key = "dedicated_instance"
+        st.caption("~10% premium applied to all fleet hourly rates.")
+    elif workspace_mode == "Dedicated Hosts":
+        workspace_key = "dedicated_host"
+        dedicated_host_rate = st.number_input(
+            "Dedicated Host hourly rate ($)", value=25.0, step=1.0,
+            help="Fixed rate per host. Check AWS pricing for your instance family.",
+        )
+
+# ---------------------------------------------------------------------------
+# Sidebar — Analysis Settings
 # ---------------------------------------------------------------------------
 with st.sidebar.expander("Analysis Settings", expanded=False):
     horizon_months = st.slider("Analysis Horizon (months)", 12, 60, 36)
     show_hybrid = st.checkbox("Include hybrid scenario", value=True,
-                              help="Hybrid = on-prem hardware costs + cloud compute costs combined.")
+                              help="Hybrid = on-prem hardware costs + cloud fleet costs combined.")
+
+# ---------------------------------------------------------------------------
+# Build fleet entries for computation
+# ---------------------------------------------------------------------------
+fleet_entries = []
+for entry in st.session_state["fleet"]:
+    if entry["usage_pattern"] == "24/7":
+        hours = 24.0
+    elif entry["usage_pattern"].startswith("Business"):
+        hours = 10.0 * (5.0 / 7.0)
+    else:
+        hours = entry.get("custom_hours", 12.0)
+
+    inst = EC2_INSTANCES[entry["instance_type"]]
+    base_rate = inst[PRICING_TIERS[entry["pricing_tier"]]]
+
+    # Live pricing override
+    rate_override = None
+    if live_prices:
+        if entry["pricing_tier"] == "Spot":
+            rate_override = live_prices["spot"].get(entry["instance_type"])
+        elif entry["pricing_tier"] == "On-Demand":
+            rate_override = live_prices["on_demand"].get(entry["instance_type"])
+
+    effective_rate = rate_override if rate_override is not None else base_rate
+
+    # Apply secure workspace modifier
+    effective_rate = apply_secure_workspace(effective_rate, workspace_key, dedicated_host_rate)
+
+    fleet_entries.append({
+        "instance_type": entry["instance_type"],
+        "count": entry["count"],
+        "pricing_tier": entry["pricing_tier"],
+        "hours_per_day": hours,
+        "hourly_rate_override": effective_rate,
+    })
 
 # ---------------------------------------------------------------------------
 # Compute
 # ---------------------------------------------------------------------------
 capex = calc_onprem_capex(gpu_count, gpu_unit_cost, chassis_cost, ram_cost, storage_cost)
 onprem_monthly = calc_onprem_monthly_opex(power_kw, electricity, rack_monthly)
-cloud_monthly = calc_cloud_monthly(hourly_rate, hours_per_day)
+fleet_monthly = calc_fleet_monthly(fleet_entries)
+cloud_monthly = fleet_monthly + eks_monthly
 breakeven = calc_breakeven_months(capex, onprem_monthly, cloud_monthly)
 hybrid_monthly = onprem_monthly + cloud_monthly if show_hybrid else None
 
 # ---------------------------------------------------------------------------
-# Title + context
+# Title
 # ---------------------------------------------------------------------------
 st.title("Hybrid Infrastructure Cost Modeler")
-st.caption("Compare on-prem GPU servers against AWS EC2 — interactive CapEx vs OpEx analysis with live pricing support.")
+st.caption("Compare on-prem GPU servers against AWS EC2 fleets — interactive CapEx vs OpEx analysis with EKS, secure workspaces, and live pricing.")
 
 # ---------------------------------------------------------------------------
 # Section A: Summary metrics
@@ -207,7 +317,10 @@ st.caption("Compare on-prem GPU servers against AWS EC2 — interactive CapEx vs
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("On-Prem CapEx", f"${capex:,.0f}")
 c2.metric("On-Prem Monthly OpEx", f"${onprem_monthly:,.0f}")
-c3.metric("Cloud Monthly", f"${cloud_monthly:,.0f}")
+cloud_label = "Cloud Fleet Monthly"
+if eks_monthly > 0:
+    cloud_label = "Cloud Fleet + EKS Monthly"
+c3.metric(cloud_label, f"${cloud_monthly:,.0f}")
 if breakeven is not None:
     c4.metric("Break-Even", f"{breakeven:.1f} months")
 else:
@@ -223,11 +336,19 @@ with st.expander("Current configuration summary"):
 - ~{power_kw:.1f} kW draw @ ${electricity:.2f}/kWh
 - CapEx: ${capex:,.0f} | OpEx: ${onprem_monthly:,.0f}/mo""")
     with col2:
-        st.markdown(f"""**Cloud**
-- {instance_name} ({instance['gpu_count']}x {instance['gpu_model']})
-- {instance['vram_gb']} GB VRAM | {instance['vcpus']} vCPUs | {instance['ram_gb']} GiB RAM
-- {pricing_tier}: ${hourly_rate:.2f}/hr {'(LIVE)' if use_live and live_prices else '(static)'}
-- {usage_pattern}: ${cloud_monthly:,.0f}/mo""")
+        lines = ["**Cloud Fleet**"]
+        for entry in st.session_state["fleet"]:
+            inst = EC2_INSTANCES[entry["instance_type"]]
+            lines.append(
+                f"- {entry['count']}x {entry['instance_type']} "
+                f"({inst['gpu_count']}x {inst['gpu_model']}) — {entry['pricing_tier']}, {entry['usage_pattern']}"
+            )
+        lines.append(f"- Fleet total: ${fleet_monthly:,.0f}/mo | {calc_fleet_vram(fleet_entries)} GB VRAM")
+        if eks_monthly > 0:
+            lines.append(f"- EKS: ${eks_monthly:,.0f}/mo")
+        if workspace_key != "shared":
+            lines.append(f"- Tenancy: {workspace_mode}")
+        st.markdown("\n".join(lines))
 
 st.divider()
 
@@ -244,10 +365,11 @@ fig_timeline.add_trace(go.Scatter(
     name="On-Prem", line=dict(color=COLORS["onprem"], width=3),
     hovertemplate="Month %{x}<br>$%{y:,.0f}<extra>On-Prem</extra>",
 ))
+cloud_trace_name = "Cloud Fleet + EKS" if eks_monthly > 0 else "Cloud Fleet"
 fig_timeline.add_trace(go.Scatter(
     x=timeline["month"], y=timeline["cloud_cumulative"],
-    name="Cloud", line=dict(color=COLORS["cloud"], width=3),
-    hovertemplate="Month %{x}<br>$%{y:,.0f}<extra>Cloud</extra>",
+    name=cloud_trace_name, line=dict(color=COLORS["cloud"], width=3),
+    hovertemplate="Month %{x}<br>$%{y:,.0f}<extra>" + cloud_trace_name + "</extra>",
 ))
 if show_hybrid and "hybrid_cumulative" in timeline.columns:
     fig_timeline.add_trace(go.Scatter(
@@ -264,12 +386,8 @@ if breakeven is not None and breakeven <= horizon_months:
         annotation_position="top right",
     )
 
-fig_timeline.update_layout(
-    **PLOTLY_LAYOUT,
-    xaxis_title="Months",
-    yaxis_title="Cumulative Cost ($)",
-    yaxis_tickformat="$,.0f",
-)
+fig_timeline.update_layout(**PLOTLY_LAYOUT, xaxis_title="Months",
+                           yaxis_title="Cumulative Cost ($)", yaxis_tickformat="$,.0f")
 st.plotly_chart(fig_timeline, use_container_width=True, config=PLOTLY_CONFIG)
 
 # ---------------------------------------------------------------------------
@@ -280,7 +398,7 @@ st.subheader("Monthly Cost Breakdown")
 amort_months = max(horizon_months, 1)
 onprem_amortized = capex / amort_months
 
-categories = ["On-Prem", "Cloud"]
+categories = ["On-Prem", "Cloud Fleet"]
 amort_values = [onprem_amortized, 0]
 opex_values = [onprem_monthly, cloud_monthly]
 
@@ -291,23 +409,17 @@ if show_hybrid:
 
 fig_monthly = go.Figure()
 fig_monthly.add_trace(go.Bar(
-    x=categories, y=amort_values,
-    name="CapEx Amortization",
+    x=categories, y=amort_values, name="CapEx Amortization",
     marker_color=COLORS["onprem_light"],
     hovertemplate="%{x}<br>$%{y:,.0f}/mo<extra>CapEx Amort.</extra>",
 ))
 fig_monthly.add_trace(go.Bar(
-    x=categories, y=opex_values,
-    name="Monthly OpEx",
+    x=categories, y=opex_values, name="Monthly OpEx",
     marker_color=[COLORS["onprem"], COLORS["cloud"], COLORS["hybrid"]][:len(categories)],
     hovertemplate="%{x}<br>$%{y:,.0f}/mo<extra>OpEx</extra>",
 ))
-fig_monthly.update_layout(
-    **PLOTLY_LAYOUT,
-    barmode="stack",
-    yaxis_title="Monthly Cost ($)",
-    yaxis_tickformat="$,.0f",
-)
+fig_monthly.update_layout(**PLOTLY_LAYOUT, barmode="stack",
+                          yaxis_title="Monthly Cost ($)", yaxis_tickformat="$,.0f")
 st.plotly_chart(fig_monthly, use_container_width=True, config=PLOTLY_CONFIG)
 
 # ---------------------------------------------------------------------------
@@ -315,29 +427,34 @@ st.plotly_chart(fig_monthly, use_container_width=True, config=PLOTLY_CONFIG)
 # ---------------------------------------------------------------------------
 st.subheader("VRAM Comparison")
 
+# Fleet instances in use
+fleet_types = {e["instance_type"] for e in st.session_state["fleet"]}
+
 vram_labels = [f"On-Prem ({gpu_count}x {gpu_model})"]
 vram_values = [gpu_count * gpu_info["vram_gb"]]
 vram_colors = [COLORS["onprem"]]
 
+# Fleet total
+fleet_vram_total = calc_fleet_vram(fleet_entries)
+if len(st.session_state["fleet"]) > 1 or st.session_state["fleet"][0]["count"] > 1:
+    vram_labels.append(f"Fleet Total ({len(fleet_entries)} entries)")
+    vram_values.append(fleet_vram_total)
+    vram_colors.append(COLORS["hybrid"])
+
 for name, inst in EC2_INSTANCES.items():
     vram_labels.append(f"{name} ({inst['gpu_count']}x {inst['gpu_model']})")
     vram_values.append(inst["vram_gb"])
-    vram_colors.append(COLORS["cloud"] if name == instance_name else COLORS["cloud_light"])
+    vram_colors.append(COLORS["cloud"] if name in fleet_types else COLORS["cloud_light"])
 
 fig_vram = go.Figure(go.Bar(
-    y=vram_labels,
-    x=vram_values,
-    orientation="h",
+    y=vram_labels, x=vram_values, orientation="h",
     marker_color=vram_colors,
     text=[f"{v} GB" for v in vram_values],
     textposition="outside",
     hovertemplate="%{y}<br>%{x} GB<extra></extra>",
 ))
-fig_vram.update_layout(
-    **PLOTLY_LAYOUT,
-    xaxis_title="Total VRAM (GB)",
-    height=max(300, len(vram_labels) * 35),
-)
+fig_vram.update_layout(**PLOTLY_LAYOUT, xaxis_title="Total VRAM (GB)",
+                       height=max(300, len(vram_labels) * 35))
 st.plotly_chart(fig_vram, use_container_width=True, config=PLOTLY_CONFIG)
 
 # ---------------------------------------------------------------------------
@@ -346,37 +463,25 @@ st.plotly_chart(fig_vram, use_container_width=True, config=PLOTLY_CONFIG)
 st.subheader("Total Cost of Ownership")
 
 tco = build_tco_table(capex, onprem_monthly, cloud_monthly, hybrid_monthly)
-
 tco_display = tco.copy()
 for col in tco_display.columns:
     if "TCO" in col:
         tco_display[col] = tco_display[col].apply(lambda v: f"${v:,.0f}")
-
 st.dataframe(tco_display, use_container_width=True, hide_index=True)
 
 fig_tco = go.Figure()
-fig_tco.add_trace(go.Bar(
-    x=tco["Horizon"], y=tco["On-Prem TCO"],
-    name="On-Prem", marker_color=COLORS["onprem"],
-    hovertemplate="%{x}<br>$%{y:,.0f}<extra>On-Prem</extra>",
-))
-fig_tco.add_trace(go.Bar(
-    x=tco["Horizon"], y=tco["Cloud TCO"],
-    name="Cloud", marker_color=COLORS["cloud"],
-    hovertemplate="%{x}<br>$%{y:,.0f}<extra>Cloud</extra>",
-))
+fig_tco.add_trace(go.Bar(x=tco["Horizon"], y=tco["On-Prem TCO"], name="On-Prem",
+                         marker_color=COLORS["onprem"],
+                         hovertemplate="%{x}<br>$%{y:,.0f}<extra>On-Prem</extra>"))
+fig_tco.add_trace(go.Bar(x=tco["Horizon"], y=tco["Cloud TCO"], name="Cloud Fleet",
+                         marker_color=COLORS["cloud"],
+                         hovertemplate="%{x}<br>$%{y:,.0f}<extra>Cloud Fleet</extra>"))
 if show_hybrid and "Hybrid TCO" in tco.columns:
-    fig_tco.add_trace(go.Bar(
-        x=tco["Horizon"], y=tco["Hybrid TCO"],
-        name="Hybrid", marker_color=COLORS["hybrid"],
-        hovertemplate="%{x}<br>$%{y:,.0f}<extra>Hybrid</extra>",
-    ))
-fig_tco.update_layout(
-    **PLOTLY_LAYOUT,
-    barmode="group",
-    yaxis_title="Total Cost ($)",
-    yaxis_tickformat="$,.0f",
-)
+    fig_tco.add_trace(go.Bar(x=tco["Horizon"], y=tco["Hybrid TCO"], name="Hybrid",
+                             marker_color=COLORS["hybrid"],
+                             hovertemplate="%{x}<br>$%{y:,.0f}<extra>Hybrid</extra>"))
+fig_tco.update_layout(**PLOTLY_LAYOUT, barmode="group",
+                      yaxis_title="Total Cost ($)", yaxis_tickformat="$,.0f")
 st.plotly_chart(fig_tco, use_container_width=True, config=PLOTLY_CONFIG)
 
 # ---------------------------------------------------------------------------
@@ -385,10 +490,6 @@ st.plotly_chart(fig_tco, use_container_width=True, config=PLOTLY_CONFIG)
 st.subheader("Export")
 
 csv = timeline.to_csv(index=False)
-st.download_button(
-    label="Download timeline data (CSV)",
-    data=csv,
-    file_name="cost_timeline.csv",
-    mime="text/csv",
-)
+st.download_button(label="Download timeline data (CSV)", data=csv,
+                   file_name="cost_timeline.csv", mime="text/csv")
 st.caption("Use the camera icon in the top-right of each chart to export as PNG.")

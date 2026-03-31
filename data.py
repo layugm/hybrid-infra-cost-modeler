@@ -194,6 +194,117 @@ def build_tco_table(
 
 
 # ---------------------------------------------------------------------------
+# EKS pricing (March 2026)
+# ---------------------------------------------------------------------------
+EKS_PRICING = {
+    "control_plane_hr": 0.10,
+    "control_plane_extended_hr": 0.60,
+    "hybrid_tiers": [
+        (576_000, 0.020),
+        (11_520_000, 0.014),
+        (float("inf"), 0.006),
+    ],
+    "anywhere_monthly_1yr": 2000,
+    "anywhere_monthly_3yr": 1500,
+}
+
+HOURS_PER_MONTH = 24 * DAYS_PER_MONTH  # ~730
+
+
+def calc_eks_control_plane_monthly(
+    cluster_count: int = 1,
+    extended_support: bool = False,
+) -> float:
+    rate = EKS_PRICING["control_plane_extended_hr" if extended_support else "control_plane_hr"]
+    return rate * HOURS_PER_MONTH * cluster_count
+
+
+def calc_eks_hybrid_monthly(vcpu_count: int, hours_per_month: float = HOURS_PER_MONTH) -> float:
+    total_vcpu_hours = vcpu_count * hours_per_month
+    cost = 0.0
+    remaining = total_vcpu_hours
+    prev_cap = 0
+    for cap, rate in EKS_PRICING["hybrid_tiers"]:
+        tier_hours = min(remaining, cap - prev_cap)
+        cost += tier_hours * rate
+        remaining -= tier_hours
+        prev_cap = cap
+        if remaining <= 0:
+            break
+    return cost
+
+
+def calc_eks_anywhere_monthly(term_years: int = 1, cluster_count: int = 1) -> float:
+    key = "anywhere_monthly_3yr" if term_years == 3 else "anywhere_monthly_1yr"
+    return EKS_PRICING[key] * cluster_count
+
+
+def calc_eks_total_monthly(
+    cluster_count: int = 1,
+    extended_support: bool = False,
+    hybrid_vcpus: int = 0,
+    anywhere: bool = False,
+    anywhere_term: int = 1,
+) -> float:
+    total = calc_eks_control_plane_monthly(cluster_count, extended_support)
+    if hybrid_vcpus > 0:
+        total += calc_eks_hybrid_monthly(hybrid_vcpus)
+    if anywhere:
+        total += calc_eks_anywhere_monthly(anywhere_term, cluster_count)
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Fleet aggregation
+# ---------------------------------------------------------------------------
+
+def calc_fleet_monthly(fleet: list[dict]) -> float:
+    """Sum cloud cost across all fleet entries.
+
+    Each entry: {"instance_type": str, "count": int, "pricing_tier": str,
+                 "hours_per_day": float, "hourly_rate_override": float | None}
+    """
+    total = 0.0
+    for entry in fleet:
+        inst = EC2_INSTANCES[entry["instance_type"]]
+        if entry.get("hourly_rate_override") is not None:
+            rate = entry["hourly_rate_override"]
+        else:
+            rate = inst[PRICING_TIERS[entry["pricing_tier"]]]
+        total += calc_cloud_monthly(rate, entry["hours_per_day"]) * entry["count"]
+    return total
+
+
+def calc_fleet_vram(fleet: list[dict]) -> int:
+    """Sum total VRAM across all fleet entries."""
+    total = 0
+    for entry in fleet:
+        inst = EC2_INSTANCES[entry["instance_type"]]
+        total += inst["vram_gb"] * entry["count"]
+    return total
+
+
+# ---------------------------------------------------------------------------
+# Secure workspace modifiers
+# ---------------------------------------------------------------------------
+
+def apply_secure_workspace(
+    base_hourly: float,
+    mode: str,
+    dedicated_host_hourly: float = 0.0,
+) -> float:
+    """Apply tenancy pricing modifier.
+
+    Modes: "shared", "nitro_enclave", "dedicated_instance", "dedicated_host"
+    """
+    if mode == "dedicated_instance":
+        return base_hourly * 1.10
+    elif mode == "dedicated_host":
+        return dedicated_host_hourly
+    return base_hourly  # shared and nitro_enclave have no cost change
+
+
+# ---------------------------------------------------------------------------
 # Live AWS pricing via boto3
 # ---------------------------------------------------------------------------
 
