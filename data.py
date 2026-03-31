@@ -337,6 +337,122 @@ def apply_secure_workspace(
 
 
 # ---------------------------------------------------------------------------
+# AWS Direct Connect pricing (March 2026)
+# ---------------------------------------------------------------------------
+DIRECT_CONNECT_PRICING = {
+    "port_hourly": {
+        "1 Gbps": 0.30,
+        "10 Gbps": 2.25,
+        "100 Gbps": 22.50,
+    },
+    "data_transfer_out_per_gb": 0.02,  # US regions
+    "data_transfer_in_per_gb": 0.00,
+}
+
+
+def calc_direct_connect_monthly(
+    port_speed: str = "10 Gbps",
+    gb_outbound_monthly: float = 0,
+) -> float:
+    port_hourly = DIRECT_CONNECT_PRICING["port_hourly"].get(port_speed, 0)
+    port_cost = port_hourly * HOURS_PER_MONTH
+    dto_cost = gb_outbound_monthly * DIRECT_CONNECT_PRICING["data_transfer_out_per_gb"]
+    return port_cost + dto_cost
+
+
+# ---------------------------------------------------------------------------
+# Utilization modeling
+# ---------------------------------------------------------------------------
+
+def apply_utilization(capex: float, utilization_pct: float) -> float:
+    """Effective CapEx adjusted for utilization.
+
+    At 70% utilization, your $34K server delivers only 70% of its
+    potential compute, making the effective cost $34K / 0.70 = $48.6K.
+    """
+    if utilization_pct <= 0:
+        return capex
+    return capex / (utilization_pct / 100)
+
+
+# ---------------------------------------------------------------------------
+# Executive summary generator
+# ---------------------------------------------------------------------------
+
+def generate_summary(
+    capex: float,
+    onprem_monthly: float,
+    cloud_monthly: float,
+    breakeven: float | None,
+    gpu_model: str,
+    gpu_count: int,
+    chassis_name: str,
+    fleet: list[dict],
+    horizon_months: int,
+    eks_monthly: float = 0,
+    dx_monthly: float = 0,
+) -> str:
+    """Generate a plain-English executive summary of the cost comparison."""
+    # Fleet description
+    fleet_parts = []
+    for entry in fleet:
+        inst = EC2_INSTANCES[entry["instance_type"]]
+        fleet_parts.append(
+            f"{entry['count']}x {entry['instance_type']} "
+            f"({inst['gpu_count']}x {inst['gpu_model']})"
+        )
+    fleet_desc = ", ".join(fleet_parts)
+
+    # 3-year TCO
+    onprem_3yr = capex + (onprem_monthly * 36)
+    cloud_3yr = cloud_monthly * 36
+
+    lines = []
+
+    # Opening
+    lines.append(
+        f"Based on the current configuration, purchasing a {chassis_name} with "
+        f"{gpu_count}x {gpu_model} (${capex:,.0f}) "
+    )
+
+    if breakeven is not None:
+        lines.append(
+            f"breaks even against cloud compute ({fleet_desc}) in "
+            f"**{breakeven:.1f} months**."
+        )
+    else:
+        lines.append(
+            f"does not break even against cloud compute ({fleet_desc}) "
+            f"within the analysis horizon — cloud remains cheaper."
+        )
+
+    # 3-year comparison
+    if onprem_3yr < cloud_3yr:
+        delta = cloud_3yr - onprem_3yr
+        lines.append(
+            f" Over 3 years, on-prem saves **${delta:,.0f}** compared to cloud-only "
+            f"(${onprem_3yr:,.0f} vs ${cloud_3yr:,.0f})."
+        )
+    else:
+        delta = onprem_3yr - cloud_3yr
+        lines.append(
+            f" Over 3 years, cloud saves **${delta:,.0f}** compared to on-prem "
+            f"(${cloud_3yr:,.0f} vs ${onprem_3yr:,.0f})."
+        )
+
+    # Add-ons
+    addons = []
+    if eks_monthly > 0:
+        addons.append(f"EKS management adds ${eks_monthly:,.0f}/mo")
+    if dx_monthly > 0:
+        addons.append(f"AWS Direct Connect adds ${dx_monthly:,.0f}/mo")
+    if addons:
+        lines.append(f" {'; '.join(addons)}.")
+
+    return "".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Live AWS pricing via boto3
 # ---------------------------------------------------------------------------
 

@@ -23,7 +23,9 @@ from data import (
     build_tco_table,
     estimate_system_power,
     fetch_all_live_prices,
+    calc_direct_connect_monthly,
     GLOSSARY,
+    DIRECT_CONNECT_PRICING,
 )
 
 # ---------------------------------------------------------------------------
@@ -261,6 +263,22 @@ with st.sidebar.expander("Secure Workspaces (optional)", expanded=False):
         )
 
 # ---------------------------------------------------------------------------
+# Sidebar — AWS Direct Connect
+# ---------------------------------------------------------------------------
+with st.sidebar.expander("AWS Direct Connect (optional)", expanded=False):
+    enable_dx = st.checkbox("Add Direct Connect costs",
+                            help="Dedicated network connection between your on-prem data center and AWS. Required for low-latency, high-bandwidth hybrid workloads like gradient transport.")
+    dx_monthly = 0.0
+    if enable_dx:
+        dx_port = st.selectbox("Port Speed", list(DIRECT_CONNECT_PRICING["port_hourly"].keys()),
+                               index=1,
+                               help="Dedicated bandwidth between your facility and AWS. 10 Gbps handles most training workloads. 100 Gbps for large-scale distributed training.")
+        dx_outbound = st.slider("Monthly Outbound Data (TB)", 0.0, 100.0, 1.0, 0.5,
+                                help="Data leaving AWS back to your on-prem systems. Inbound to AWS is free. Gradient compression can reduce volumes 10-100x.")
+        dx_monthly = calc_direct_connect_monthly(dx_port, dx_outbound * 1000)  # TB -> GB
+        st.metric("Direct Connect Monthly", f"${dx_monthly:,.0f}")
+
+# ---------------------------------------------------------------------------
 # Sidebar — Analysis Settings
 # ---------------------------------------------------------------------------
 with st.sidebar.expander("Analysis Settings", expanded=False):
@@ -310,9 +328,24 @@ for entry in st.session_state["fleet"]:
 capex = calc_onprem_capex(gpu_count, gpu_unit_cost, chassis_cost, ram_cost, storage_cost)
 onprem_monthly = calc_onprem_monthly_opex(power_kw, electricity, rack_monthly)
 fleet_monthly = calc_fleet_monthly(fleet_entries)
-cloud_monthly = fleet_monthly + eks_monthly
+cloud_monthly = fleet_monthly + eks_monthly + dx_monthly
 breakeven = calc_breakeven_months(capex, onprem_monthly, cloud_monthly)
 hybrid_monthly = onprem_monthly + cloud_monthly if show_hybrid else None
+
+# Store computed values for other pages
+st.session_state["computed"] = {
+    "capex": capex, "onprem_monthly": onprem_monthly,
+    "cloud_monthly": cloud_monthly, "fleet_monthly": fleet_monthly,
+    "eks_monthly": eks_monthly, "dx_monthly": dx_monthly,
+    "breakeven": breakeven, "hybrid_monthly": hybrid_monthly,
+    "fleet_entries": fleet_entries, "gpu_model": gpu_model,
+    "gpu_count": gpu_count, "gpu_info": gpu_info,
+    "chassis_name": chassis_name, "horizon_months": horizon_months,
+    "power_kw": power_kw, "electricity": electricity,
+    "rack_monthly": rack_monthly, "show_hybrid": show_hybrid,
+    "chassis_cost": chassis_cost, "gpu_unit_cost": gpu_unit_cost,
+    "ram_cost": ram_cost, "storage_cost": storage_cost,
+}
 
 # ---------------------------------------------------------------------------
 # Title
