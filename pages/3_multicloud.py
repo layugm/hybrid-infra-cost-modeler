@@ -11,7 +11,7 @@ st.set_page_config(page_title="Multi-Cloud", page_icon=":globe_with_meridians:",
 st.title("Multi-Cloud GPU Price Comparison", anchor=False)
 st.caption("Side-by-side pricing for equivalent GPU instances across AWS, Google Cloud, and Microsoft Azure.")
 
-CLOUD_COLORS = {"AWS": "#FF9900", "GCP": "#4285F4", "Azure": "#0078D4"}
+CLOUD_COLORS = {"AWS": "#FF9900", "GCP": "#34A853", "Azure": "#0078D4"}
 
 PLOTLY_LAYOUT = dict(
     template="plotly_white",
