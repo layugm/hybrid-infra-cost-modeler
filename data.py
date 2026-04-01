@@ -99,6 +99,53 @@ EC2_INSTANCES = {
                     "use_case": "Frontier model training", "desc": "8x H100 — fastest available. For training the largest models. 3200Gbps networking."},
 }
 
+# ---------------------------------------------------------------------------
+# GCP instance catalog (us-central1 pricing, March 2026)
+# ---------------------------------------------------------------------------
+GCP_INSTANCES = {
+    # G2 — NVIDIA L4 (Ada Lovelace)
+    "g2-standard-4": {"cloud": "GCP", "gpu_model": "L4", "gpu_count": 1, "vram_gb": 24, "vcpus": 4, "ram_gb": 16,
+                      "on_demand_hr": 0.70, "spot_hr": 0.24,
+                      "use_case": "Cost-efficient inference", "desc": "Single L4 for light inference workloads."},
+    "g2-standard-48": {"cloud": "GCP", "gpu_model": "L4", "gpu_count": 4, "vram_gb": 96, "vcpus": 48, "ram_gb": 192,
+                       "on_demand_hr": 2.80, "spot_hr": 0.95,
+                       "use_case": "Multi-model inference", "desc": "4x L4 for parallel inference or medium models."},
+    # A2 — NVIDIA A100 (Ampere)
+    "a2-highgpu-1g": {"cloud": "GCP", "gpu_model": "A100 40GB", "gpu_count": 1, "vram_gb": 40, "vcpus": 12, "ram_gb": 85,
+                      "on_demand_hr": 3.67, "spot_hr": 1.10,
+                      "use_case": "Single-GPU training", "desc": "1x A100 40GB for fine-tuning and moderate training."},
+    "a2-highgpu-4g": {"cloud": "GCP", "gpu_model": "A100 40GB", "gpu_count": 4, "vram_gb": 160, "vcpus": 48, "ram_gb": 340,
+                      "on_demand_hr": 14.69, "spot_hr": 4.41,
+                      "use_case": "Multi-GPU training", "desc": "4x A100 40GB for distributed training workloads."},
+    "a2-ultragpu-8g": {"cloud": "GCP", "gpu_model": "A100 80GB", "gpu_count": 8, "vram_gb": 640, "vcpus": 96, "ram_gb": 1360,
+                       "on_demand_hr": 40.22, "spot_hr": 12.07,
+                       "use_case": "Large model training", "desc": "8x A100 80GB — GCP's top A100 config for large-scale training."},
+    # A3 — NVIDIA H100 (Hopper)
+    "a3-highgpu-8g": {"cloud": "GCP", "gpu_model": "H100", "gpu_count": 8, "vram_gb": 640, "vcpus": 208, "ram_gb": 1872,
+                      "on_demand_hr": 88.49, "spot_hr": 26.55,
+                      "use_case": "Frontier model training", "desc": "8x H100 — GCP's fastest GPU config. 3.6 Tbps GPU-to-GPU bandwidth."},
+}
+
+# ---------------------------------------------------------------------------
+# Azure instance catalog (East US pricing, March 2026)
+# ---------------------------------------------------------------------------
+AZURE_INSTANCES = {
+    # NC A100 v4 — NVIDIA A100 80GB (Ampere)
+    "NC24ads A100 v4": {"cloud": "Azure", "gpu_model": "A100 80GB", "gpu_count": 1, "vram_gb": 80, "vcpus": 24, "ram_gb": 220,
+                        "on_demand_hr": 3.67, "spot_hr": 0.74,
+                        "use_case": "Single-GPU training", "desc": "1x A100 80GB for fine-tuning. Cheapest Azure A100 option."},
+    "NC48ads A100 v4": {"cloud": "Azure", "gpu_model": "A100 80GB", "gpu_count": 2, "vram_gb": 160, "vcpus": 48, "ram_gb": 440,
+                        "on_demand_hr": 7.35, "spot_hr": 1.47,
+                        "use_case": "Multi-GPU training", "desc": "2x A100 80GB for distributed training."},
+    "NC96ads A100 v4": {"cloud": "Azure", "gpu_model": "A100 80GB", "gpu_count": 4, "vram_gb": 320, "vcpus": 96, "ram_gb": 880,
+                        "on_demand_hr": 14.69, "spot_hr": 2.94,
+                        "use_case": "Heavy training", "desc": "4x A100 80GB — Azure's largest A100 config per VM."},
+    # ND H100 v5 — NVIDIA H100 (Hopper)
+    "ND96isr H100 v5": {"cloud": "Azure", "gpu_model": "H100", "gpu_count": 8, "vram_gb": 640, "vcpus": 96, "ram_gb": 1900,
+                        "on_demand_hr": 98.32, "spot_hr": 70.00,
+                        "use_case": "Frontier model training", "desc": "8x H100 — Azure's top GPU config. InfiniBand networking."},
+}
+
 # Plain-English descriptions for AWS concepts shown in the UI
 GLOSSARY = {
     "on_demand": "Pay by the hour, no commitment. Most expensive but fully flexible — start/stop anytime.",
