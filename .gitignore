@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.env
+*.docx
+CLAUDE.md
+.claude/
+.streamlit/
+
+# Local research/validation artifacts, not part of the app
+*_results/
